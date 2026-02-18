@@ -18,7 +18,7 @@ services:
     volumes:
       - ./data/sqlite:/app/data
       - ./data/sandbox:/app/sandbox
-      - ./.otto/skills:/app/.otto/skills
+      - ./skills:/app/skills
       - ./data/team_memory:/data/team_memory
       - ./data/uploads:/data/uploads
       - ./logs:/app/logs
@@ -84,7 +84,7 @@ services:
     volumes:
       - ./data/sqlite:/app/data
       - ./data/sandbox:/app/sandbox
-      - ./.otto/skills:/app/.otto/skills
+      - ./skills:/app/skills
       - ./data/team_memory:/data/team_memory
       - ./data/uploads:/data/uploads
       - ./logs:/app/logs

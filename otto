@@ -519,7 +519,7 @@ ensure_data_dirs() {
            "$OTTO_DIR/data/uploads" \
            "$OTTO_DIR/data/team_memory" \
            "$OTTO_DIR/logs" \
-           "$OTTO_DIR/.otto/skills"
+           "$OTTO_DIR/skills"
 }
 
 # ---------------------------------------------------------------------------
@@ -655,9 +655,9 @@ cmd_update() {
   chmod +x "$OTTO_DIR/otto" "$OTTO_DIR/scripts/backup.sh" "$OTTO_DIR/scripts/restore.sh" 2>/dev/null || true
 
   # Update default skills (won't overwrite user-modified skills)
-  local skills_dir="$OTTO_DIR/.otto/skills/metaskill/skill-creation"
+  local skills_dir="$OTTO_DIR/skills/metaskill/skill-creation"
   mkdir -p "$skills_dir"
-  curl -fsSL "$base/.otto/skills/metaskill/skill-creation/SKILL.md" -o "$skills_dir/SKILL.md" 2>/dev/null || true
+  curl -fsSL "$base/skills/metaskill/skill-creation/SKILL.md" -o "$skills_dir/SKILL.md" 2>/dev/null || true
 
   # Ensure otto is on PATH via /usr/local/bin symlink
   local link_dir="/usr/local/bin"

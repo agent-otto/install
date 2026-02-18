@@ -179,22 +179,22 @@ Key principles:
 
 **Directory structure**:
 ```
-.otto/skills/[category]/[skill-name]/SKILL.md
+skills/[category]/[skill-name]/SKILL.md
 ```
 
 **Steps**:
 
 1. **Determine location**:
-   - Project-specific: `.otto/skills/`
-   - User-wide: `~/.otto/skills/`
+   - Project-specific: `skills/`
+   - User-wide: `~/otto/skills/`
 
 2. **Create directory**:
    ```bash
-   mkdir -p .otto/skills/[category]/[skill-name]
+   mkdir -p skills/[category]/[skill-name]
    ```
 
 3. **Write file** using `write_file`:
-   - Path: `.otto/skills/[category]/[skill-name]/SKILL.md`
+   - Path: `skills/[category]/[skill-name]/SKILL.md`
    - Content: Complete skill markdown
 
 4. **Verify** using `read_file` to confirm creation
@@ -272,7 +272,7 @@ Before considering the skill complete:
 - [ ] Best Practices section included (DO/DON'T)
 - [ ] Tool integration guidance provided
 - [ ] At least one concrete example included
-- [ ] File saved to correct path: `.otto/skills/[category]/[skill-name]/SKILL.md`
+- [ ] File saved to correct path: `skills/[category]/[skill-name]/SKILL.md`
 - [ ] Version set to 1.0.0 for new skills
 
 ## Common Categories

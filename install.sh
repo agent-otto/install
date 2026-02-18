@@ -48,7 +48,7 @@ if [ -d "$INSTALL_DIR" ]; then
 fi
 
 info "Installing Otto to ${BOLD}$INSTALL_DIR${NC} ..."
-mkdir -p "$INSTALL_DIR/scripts" "$INSTALL_DIR/.otto/skills/metaskill/skill-creation"
+mkdir -p "$INSTALL_DIR/scripts" "$INSTALL_DIR/skills/metaskill/skill-creation"
 
 # Core files
 FILES="otto docker-compose.yml .env.example mcp-config.json scripts/backup.sh scripts/restore.sh"
@@ -61,7 +61,7 @@ for file in $FILES; do
 done
 
 # Default skills
-SKILLS=".otto/skills/metaskill/skill-creation/SKILL.md"
+SKILLS="skills/metaskill/skill-creation/SKILL.md"
 for file in $SKILLS; do
   curl -fsSL "$BASE/$file" -o "$INSTALL_DIR/$file" 2>/dev/null || true
 done
