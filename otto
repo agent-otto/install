@@ -1,0 +1,719 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+OTTO_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMPOSE_DEV="$OTTO_DIR/docker-compose.dev.yml"
+COMPOSE_RUN="$OTTO_DIR/docker-compose.yml"
+ENV_FILE="$OTTO_DIR/.env"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+info()  { echo -e "${BLUE}[otto]${NC} $*"; }
+ok()    { echo -e "${GREEN}[otto]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[otto]${NC} $*"; }
+err()   { echo -e "${RED}[otto]${NC} $*" >&2; }
+
+# ---------------------------------------------------------------------------
+# Prerequisite checks
+# ---------------------------------------------------------------------------
+check_docker() {
+  if ! command -v docker &>/dev/null; then
+    err "Docker is not installed. Install it from https://docs.docker.com/get-docker/"
+    exit 1
+  fi
+  if ! docker info &>/dev/null; then
+    err "Docker daemon is not running. Please start Docker and try again."
+    exit 1
+  fi
+}
+
+check_node() {
+  if ! command -v node &>/dev/null; then
+    err "Node.js is not installed. Install Node.js 22+ from https://nodejs.org/"
+    exit 1
+  fi
+  local node_major
+  node_major=$(node -v | sed 's/v\([0-9]*\).*/\1/')
+  if [ "$node_major" -lt 18 ]; then
+    err "Node.js 18+ required (found $(node -v)). Please upgrade."
+    exit 1
+  fi
+}
+
+check_npm() {
+  if ! command -v npm &>/dev/null; then
+    err "npm is not installed. It should come with Node.js."
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# .env helpers
+# ---------------------------------------------------------------------------
+
+# Read a value from .env (returns empty string if not found or commented out)
+env_get() {
+  local key="$1"
+  if [ -f "$ENV_FILE" ]; then
+    grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | tail -1 | sed "s/^${key}=//" || true
+  fi
+}
+
+# Set a key=value in .env (creates or updates)
+env_set() {
+  local key="$1" value="$2"
+  if [ ! -f "$ENV_FILE" ]; then
+    echo "${key}=${value}" > "$ENV_FILE"
+    return
+  fi
+  if grep -qE "^${key}=" "$ENV_FILE" 2>/dev/null; then
+    # Update existing (use | as delimiter to avoid issues with / in values)
+    sed -i.bak "s|^${key}=.*|${key}=${value}|" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+  elif grep -qE "^# *${key}=" "$ENV_FILE" 2>/dev/null; then
+    # Uncomment and set
+    sed -i.bak "s|^# *${key}=.*|${key}=${value}|" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
+  else
+    # Append
+    echo "${key}=${value}" >> "$ENV_FILE"
+  fi
+}
+
+# Prompt user for input with optional current value shown
+# Usage: ask "Prompt text" DEFAULT_VALUE
+# Result stored in $REPLY
+ask() {
+  local prompt="$1"
+  local default="${2:-}"
+  if [ -n "$default" ]; then
+    echo -en "  ${prompt} ${DIM}[${default}]${NC}: "
+    read -r REPLY
+    REPLY="${REPLY:-$default}"
+  else
+    echo -en "  ${prompt}: "
+    read -r REPLY
+  fi
+}
+
+# Prompt for a secret (masked input) with optional current value indicator
+ask_secret() {
+  local prompt="$1"
+  local current="${2:-}"
+  if [ -n "$current" ]; then
+    local masked="${current:0:4}...${current: -4}"
+    echo -en "  ${prompt} ${DIM}[${masked}]${NC}: "
+    read -rs REPLY
+    echo ""
+    REPLY="${REPLY:-$current}"
+  else
+    echo -en "  ${prompt}: "
+    read -rs REPLY
+    echo ""
+  fi
+}
+
+# Yes/no prompt, default to $2 (y or n)
+ask_yn() {
+  local prompt="$1"
+  local default="${2:-n}"
+  local hint="y/N"
+  [ "$default" = "y" ] && hint="Y/n"
+  echo -en "  ${prompt} ${DIM}[${hint}]${NC}: "
+  read -r REPLY
+  REPLY="${REPLY:-$default}"
+  [[ "$REPLY" =~ ^[Yy] ]]
+}
+
+section() {
+  echo ""
+  echo -e "${CYAN}${BOLD}── $1 ──${NC}"
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Settings sync — regenerate .env from template, preserving user values
+# ---------------------------------------------------------------------------
+cmd_sync_settings() {
+  local example="$OTTO_DIR/.env.example"
+  if [ ! -f "$example" ]; then
+    err "No .env.example found. Run './otto update' first."
+    return 1
+  fi
+  if [ ! -f "$ENV_FILE" ]; then
+    info "No .env file — nothing to sync."
+    return 0
+  fi
+
+  # 1. Extract active (uncommented) KEY=VALUE pairs from user's .env
+  local user_file seen_file new_file
+  user_file="$(mktemp)"
+  seen_file="$(mktemp)"
+  new_file="$(mktemp)"
+  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_FILE" > "$user_file" 2>/dev/null || true
+
+  # Helper: look up a key in the user file, return value (or fail)
+  _user_val() {
+    local match
+    match="$(grep -E "^${1}=" "$user_file" | tail -1)" || return 1
+    printf '%s' "${match#*=}"
+  }
+
+  # 2. Walk .env.example line by line, build new .env
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Commented-out setting: # KEY=default
+    if echo "$line" | grep -qE '^# *[A-Za-z_][A-Za-z0-9_]*='; then
+      local key
+      key="$(echo "$line" | sed 's/^# *\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/')"
+      local uval
+      if uval="$(_user_val "$key")"; then
+        echo "${key}=${uval}" >> "$new_file"
+      else
+        echo "$line" >> "$new_file"
+      fi
+      echo "$key" >> "$seen_file"
+    # Active setting: KEY=default
+    elif echo "$line" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*='; then
+      local key
+      key="$(echo "$line" | sed 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/')"
+      local uval
+      if uval="$(_user_val "$key")"; then
+        echo "${key}=${uval}" >> "$new_file"
+      else
+        echo "$line" >> "$new_file"
+      fi
+      echo "$key" >> "$seen_file"
+    else
+      # Comment, section header, blank line — pass through
+      echo "$line" >> "$new_file"
+    fi
+  done < "$example"
+
+  # 3. Append any user keys not in the template
+  local has_extras=false
+  while IFS= read -r uline; do
+    local key="${uline%%=*}"
+    if ! grep -qxF "$key" "$seen_file" 2>/dev/null; then
+      if [ "$has_extras" = "false" ]; then
+        echo "" >> "$new_file"
+        echo "# ---------------------------------------------------------------------------" >> "$new_file"
+        echo "# Custom settings (not in template)" >> "$new_file"
+        echo "# ---------------------------------------------------------------------------" >> "$new_file"
+        has_extras=true
+      fi
+      echo "$uline" >> "$new_file"
+    fi
+  done < "$user_file"
+
+  # 4. Write back
+  mv "$new_file" "$ENV_FILE"
+  rm -f "$user_file" "$seen_file"
+  ok "Settings synced with latest template"
+}
+
+# ---------------------------------------------------------------------------
+# Configure wizard
+# ---------------------------------------------------------------------------
+cmd_configure() {
+  echo ""
+  echo -e "${BOLD}Otto Setup Wizard${NC}"
+  echo -e "${DIM}Configure your Otto installation step by step.${NC}"
+  echo -e "${DIM}Press Enter to keep current values shown in [brackets].${NC}"
+
+  # Start from .env.example if no .env exists
+  if [ ! -f "$ENV_FILE" ]; then
+    if [ -f "$OTTO_DIR/.env.example" ]; then
+      cp "$OTTO_DIR/.env.example" "$ENV_FILE"
+    else
+      touch "$ENV_FILE"
+    fi
+  fi
+
+  # ------------------------------------------------------------------
+  # 1. LLM Provider (required)
+  # ------------------------------------------------------------------
+  section "LLM Provider (required)"
+  echo -e "  Otto needs an LLM to work. Pick one provider:"
+  echo ""
+  echo -e "    ${BOLD}1)${NC} Google Gemini ${DIM}(recommended — fast, great tool use)${NC}"
+  echo -e "    ${BOLD}2)${NC} OpenAI ${DIM}(GPT-5-mini and above)${NC}"
+  echo -e "    ${BOLD}3)${NC} Ollama ${DIM}(local, free, no API key — requires Ollama installed)${NC}"
+  echo ""
+
+  # Detect current provider
+  local current_provider=""
+  if [ "$(env_get USE_GEMINI)" = "true" ]; then
+    current_provider="1"
+  elif [ "$(env_get USE_OLLAMA)" = "true" ]; then
+    current_provider="3"
+  elif [ -n "$(env_get OPENAI_API_KEY)" ]; then
+    current_provider="2"
+  fi
+
+  ask "Choose [1/2/3]" "$current_provider"
+  local provider="$REPLY"
+
+  case "$provider" in
+    1)
+      env_set USE_GEMINI true
+      env_set USE_OLLAMA false
+
+      echo ""
+      echo -e "  ${DIM}Get your API key at: https://aistudio.google.com/apikey${NC}"
+      ask_secret "Google API key" "$(env_get GOOGLE_API_KEY)"
+      env_set GOOGLE_API_KEY "$REPLY"
+
+      ask "Gemini model" "$(env_get GEMINI_MODEL || echo 'gemini-2.5-pro-preview-05-06')"
+      env_set GEMINI_MODEL "$REPLY"
+
+      ok "Using Google Gemini"
+      ;;
+    2)
+      env_set USE_GEMINI false
+      env_set USE_OLLAMA false
+
+      echo ""
+      echo -e "  ${DIM}Get your API key at: https://platform.openai.com/api-keys${NC}"
+      ask_secret "OpenAI API key" "$(env_get OPENAI_API_KEY)"
+      env_set OPENAI_API_KEY "$REPLY"
+
+      ask "OpenAI model" "$(env_get OPENAI_MODEL || echo 'gpt-4o-mini')"
+      env_set OPENAI_MODEL "$REPLY"
+
+      ok "Using OpenAI"
+      ;;
+    3)
+      env_set USE_OLLAMA true
+      env_set USE_GEMINI false
+
+      ask "Ollama base URL" "$(env_get OLLAMA_BASE_URL || echo 'http://host.docker.internal:11434')"
+      env_set OLLAMA_BASE_URL "$REPLY"
+
+      ask "Ollama model" "$(env_get OLLAMA_MODEL || echo 'llama3.2')"
+      env_set OLLAMA_MODEL "$REPLY"
+
+      ok "Using Ollama (make sure it's running before starting Otto)"
+      ;;
+    *)
+      err "Invalid choice. Please run './otto configure' again."
+      exit 1
+      ;;
+  esac
+
+  # ------------------------------------------------------------------
+  # 2. Otto Personality (optional)
+  # ------------------------------------------------------------------
+  section "Otto Personality (optional)"
+  echo -e "  ${DIM}Give Otto a specialization so it focuses on what matters to you.${NC}"
+  echo -e "  ${DIM}Examples: 'marketing assistant', 'software engineering', 'executive assistant'${NC}"
+  echo ""
+
+  ask "Specialization (or Enter to skip)" "$(env_get SPECIALIZATION)"
+  [ -n "$REPLY" ] && env_set SPECIALIZATION "$REPLY"
+
+  # ------------------------------------------------------------------
+  # 3. Slack Integration (optional)
+  # ------------------------------------------------------------------
+  section "Slack Integration (optional)"
+  echo -e "  ${DIM}Connect Otto to Slack so it can read and send messages.${NC}"
+  echo ""
+
+  if ask_yn "Set up Slack?" "$([ -n "$(env_get SLACK_BOT_TOKEN)" ] && echo y || echo n)"; then
+    echo ""
+    echo -e "  ${DIM}To set up Slack, create a Slack App:${NC}"
+    echo -e "  ${DIM}  1. Go to https://api.slack.com/apps and click 'Create New App'${NC}"
+    echo -e "  ${DIM}  2. Choose 'From scratch', name it 'Otto', pick your workspace${NC}"
+    echo -e "  ${DIM}  3. Under 'OAuth & Permissions', add these Bot Token Scopes:${NC}"
+    echo -e "  ${DIM}       channels:history, channels:read, chat:write,${NC}"
+    echo -e "  ${DIM}       users:read, users:read.email, files:read${NC}"
+    echo -e "  ${DIM}  4. Install the app to your workspace${NC}"
+    echo -e "  ${DIM}  5. Copy the 'Bot User OAuth Token' (starts with xoxb-)${NC}"
+    echo -e "  ${DIM}  6. Under 'Basic Information', copy the 'Signing Secret'${NC}"
+    echo ""
+
+    ask_secret "Bot Token (xoxb-...)" "$(env_get SLACK_BOT_TOKEN)"
+    env_set SLACK_BOT_TOKEN "$REPLY"
+
+    ask_secret "Signing Secret" "$(env_get SLACK_SIGNING_SECRET)"
+    env_set SLACK_SIGNING_SECRET "$REPLY"
+
+    echo ""
+    echo -e "  ${DIM}The MCP bot token lets Otto use Slack tools (search, etc).${NC}"
+    echo -e "  ${DIM}This is usually the same as the Bot Token above.${NC}"
+    ask_secret "MCP Bot Token (xoxb-..., or Enter to reuse above)" "$(env_get SLACK_MCP_XOXB_TOKEN)"
+    if [ -n "$REPLY" ]; then
+      env_set SLACK_MCP_XOXB_TOKEN "$REPLY"
+    else
+      env_set SLACK_MCP_XOXB_TOKEN "$(env_get SLACK_BOT_TOKEN)"
+    fi
+
+    ok "Slack configured"
+  else
+    echo -e "  ${DIM}Skipped. Run './otto configure' later to add it.${NC}"
+  fi
+
+  # ------------------------------------------------------------------
+  # 4. Email Integration (optional)
+  # ------------------------------------------------------------------
+  section "Email Integration (optional)"
+  echo -e "  ${DIM}Let Otto send and receive emails on your behalf.${NC}"
+  echo -e "  ${DIM}Requires an SMTP server (sending) and IMAP server (receiving).${NC}"
+  echo ""
+
+  if ask_yn "Set up Email?" "$([ -n "$(env_get SMTP_HOST)" ] && echo y || echo n)"; then
+    echo ""
+    echo -e "  ${BOLD}Outgoing mail (SMTP):${NC}"
+    ask "SMTP host (e.g. smtp.gmail.com)" "$(env_get SMTP_HOST)"
+    env_set SMTP_HOST "$REPLY"
+
+    ask "SMTP port" "$(env_get SMTP_PORT || echo '465')"
+    env_set SMTP_PORT "$REPLY"
+
+    ask "SMTP username (usually your email)" "$(env_get SMTP_USER)"
+    env_set SMTP_USER "$REPLY"
+
+    ask_secret "SMTP password" "$(env_get SMTP_PASS)"
+    env_set SMTP_PASS "$REPLY"
+
+    echo ""
+    echo -e "  ${BOLD}Incoming mail (IMAP):${NC}"
+    ask "IMAP host (e.g. imap.gmail.com)" "$(env_get IMAP_HOST)"
+    env_set IMAP_HOST "$REPLY"
+
+    ask "IMAP port" "$(env_get IMAP_PORT || echo '993')"
+    env_set IMAP_PORT "$REPLY"
+
+    ask "Check interval in seconds" "$(env_get IMAP_CHECK || echo '30')"
+    env_set IMAP_CHECK "$REPLY"
+
+    ok "Email configured"
+  else
+    echo -e "  ${DIM}Skipped.${NC}"
+  fi
+
+  # ------------------------------------------------------------------
+  # 5. Redis Password (optional)
+  # ------------------------------------------------------------------
+  section "Redis Password (optional)"
+  echo -e "  ${DIM}Set a password for the Redis instance. Recommended for production,${NC}"
+  echo -e "  ${DIM}not needed for local development.${NC}"
+  echo ""
+
+  if ask_yn "Set a Redis password?" "$([ -n "$(env_get REDIS_PASSWORD)" ] && echo y || echo n)"; then
+    local current_redis_pw
+    current_redis_pw="$(env_get REDIS_PASSWORD)"
+    if [ -z "$current_redis_pw" ]; then
+      # Generate a random password suggestion
+      local suggested_pw
+      suggested_pw="$(openssl rand -base64 24 2>/dev/null || head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 24)"
+      echo -e "  ${DIM}Suggested password: ${suggested_pw}${NC}"
+      ask "Redis password" "$suggested_pw"
+    else
+      ask_secret "Redis password" "$current_redis_pw"
+    fi
+    env_set REDIS_PASSWORD "$REPLY"
+    ok "Redis password set"
+  else
+    echo -e "  ${DIM}Skipped — Redis will run without authentication.${NC}"
+  fi
+
+  # ------------------------------------------------------------------
+  # 6. LangSmith Tracing (optional)
+  # ------------------------------------------------------------------
+  section "LangSmith Tracing (optional)"
+  echo -e "  ${DIM}LangSmith lets you trace and debug Otto's LLM calls.${NC}"
+  echo -e "  ${DIM}Free tier available at https://smith.langchain.com${NC}"
+  echo ""
+
+  if ask_yn "Set up LangSmith?" "$([ -n "$(env_get LANGCHAIN_API_KEY)" ] && echo y || echo n)"; then
+    ask_secret "LangSmith API key" "$(env_get LANGCHAIN_API_KEY)"
+    env_set LANGCHAIN_API_KEY "$REPLY"
+    env_set LANGSMITH_API_KEY "$REPLY"
+
+    ask "Project name" "$(env_get LANGCHAIN_PROJECT || echo 'otto')"
+    env_set LANGCHAIN_PROJECT "$REPLY"
+    env_set LANGSMITH_PROJECT "$REPLY"
+
+    env_set LANGCHAIN_TRACING_V2 true
+    env_set LANGSMITH_TRACING true
+
+    ok "LangSmith tracing enabled"
+  else
+    env_set LANGCHAIN_TRACING_V2 false
+    env_set LANGSMITH_TRACING false
+    echo -e "  ${DIM}Skipped.${NC}"
+  fi
+
+  # ------------------------------------------------------------------
+  # Done
+  # ------------------------------------------------------------------
+  echo ""
+  echo -e "${GREEN}${BOLD}Setup complete!${NC}"
+  echo ""
+  info "Config saved to: $ENV_FILE"
+  echo ""
+  info "Start Otto with:  ./otto start"
+  info "Reconfigure with: ./otto configure"
+  echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Environment setup
+# ---------------------------------------------------------------------------
+ensure_env() {
+  if [ ! -f "$ENV_FILE" ]; then
+    info "No .env file found. Let's set up Otto!"
+    cmd_configure
+    return
+  fi
+
+  # Check if any LLM provider is configured
+  local has_llm=false
+  [ -n "$(env_get GOOGLE_API_KEY)" ] && has_llm=true
+  [ -n "$(env_get OPENAI_API_KEY)" ] && has_llm=true
+  [ "$(env_get USE_OLLAMA)" = "true" ] && has_llm=true
+
+  if [ "$has_llm" = "false" ]; then
+    warn "No LLM provider configured. Let's set one up!"
+    cmd_configure
+  fi
+}
+
+ensure_data_dirs() {
+  mkdir -p "$OTTO_DIR/data/sqlite" \
+           "$OTTO_DIR/data/redis" \
+           "$OTTO_DIR/data/sandbox" \
+           "$OTTO_DIR/data/uploads" \
+           "$OTTO_DIR/data/team_memory" \
+           "$OTTO_DIR/logs" \
+           "$OTTO_DIR/.otto/skills"
+}
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+cmd_dev() {
+  info "Starting Otto in development mode..."
+  check_docker
+  check_node
+  check_npm
+  ensure_env
+  ensure_data_dirs
+
+  # Install frontend dependencies if needed
+  if [ ! -d "$OTTO_DIR/frontend/node_modules" ]; then
+    info "Installing frontend dependencies..."
+    (cd "$OTTO_DIR/frontend" && npm install)
+  fi
+
+  # Start backend + redis in Docker (background)
+  info "Starting backend services (Docker)..."
+  docker compose -f "$COMPOSE_DEV" up -d
+
+  # Wait for backend to be reachable
+  info "Waiting for backend..."
+  local attempts=0
+  while ! curl -sf http://localhost:8000/api/health &>/dev/null; do
+    attempts=$((attempts + 1))
+    if [ $attempts -gt 30 ]; then
+      err "Backend failed to start. Check logs with: ./otto logs"
+      docker compose -f "$COMPOSE_DEV" logs --tail=20
+      exit 1
+    fi
+    sleep 2
+  done
+  ok "Backend is ready at http://localhost:8000"
+
+  # Start frontend natively with hot reload
+  info "Starting frontend (Next.js dev server)..."
+  echo ""
+  ok "Otto is running:"
+  ok "  Frontend: http://localhost:3000 (hot reload)"
+  ok "  Backend:  http://localhost:8000"
+  echo ""
+  info "Press Ctrl+C to stop everything."
+  echo ""
+
+  # Run frontend in foreground; on exit, stop Docker services
+  trap 'echo ""; info "Shutting down..."; docker compose -f "$COMPOSE_DEV" down; ok "Stopped."' EXIT INT TERM
+  (cd "$OTTO_DIR/frontend" && npm run dev)
+}
+
+cmd_start() {
+  info "Starting Otto..."
+  check_docker
+  ensure_env
+  ensure_data_dirs
+
+  docker compose -f "$COMPOSE_RUN" up -d
+
+  echo ""
+  ok "Otto is running at http://localhost:3000"
+  echo ""
+  info "Run './otto logs' to see output, './otto stop' to shut down."
+}
+
+cmd_stop() {
+  info "Stopping Otto..."
+  docker compose -f "$COMPOSE_RUN" down 2>/dev/null || true
+  docker compose -f "$COMPOSE_DEV" down 2>/dev/null || true
+  ok "Stopped."
+}
+
+cmd_restart() {
+  info "Restarting Otto..."
+  docker compose -f "$COMPOSE_RUN" restart 2>/dev/null || \
+    docker compose -f "$COMPOSE_DEV" restart 2>/dev/null || \
+    err "No running containers found."
+}
+
+cmd_status() {
+  docker compose -f "$COMPOSE_RUN" ps 2>/dev/null || \
+    docker compose -f "$COMPOSE_DEV" ps 2>/dev/null || \
+    echo "No running containers found."
+
+  echo ""
+  if curl -sf http://localhost:8000/api/health &>/dev/null; then
+    ok "Backend: healthy"
+  else
+    warn "Backend: not responding"
+  fi
+
+  if curl -sf http://localhost:3000 &>/dev/null; then
+    ok "Frontend: healthy"
+  else
+    warn "Frontend: not responding"
+  fi
+}
+
+cmd_logs() {
+  local service="${1:-}"
+  if [ -n "$service" ]; then
+    docker compose -f "$COMPOSE_RUN" logs -f "$service" 2>/dev/null || \
+      docker compose -f "$COMPOSE_DEV" logs -f "$service" 2>/dev/null
+  else
+    docker compose -f "$COMPOSE_RUN" logs -f 2>/dev/null || \
+      docker compose -f "$COMPOSE_DEV" logs -f 2>/dev/null
+  fi
+}
+
+cmd_update() {
+  info "Updating Otto..."
+  check_docker
+
+  # Update the CLI, compose file, and helper scripts from GitHub
+  local repo="agent-otto/install"
+  local branch="main"
+  local base="https://raw.githubusercontent.com/$repo/$branch"
+  local auth=()
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    auth=(-H "Authorization: token $GITHUB_TOKEN")
+  fi
+
+  info "Downloading latest files..."
+  for file in otto docker-compose.yml .env.example scripts/backup.sh scripts/restore.sh; do
+    if curl -fsSL "${auth[@]}" "$base/$file" -o "$OTTO_DIR/$file.tmp" 2>/dev/null; then
+      mv "$OTTO_DIR/$file.tmp" "$OTTO_DIR/$file"
+    else
+      rm -f "$OTTO_DIR/$file.tmp"
+      warn "Could not update $file (continuing)"
+    fi
+  done
+  chmod +x "$OTTO_DIR/otto" "$OTTO_DIR/scripts/backup.sh" "$OTTO_DIR/scripts/restore.sh" 2>/dev/null || true
+
+  # Ensure otto is on PATH via /usr/local/bin symlink
+  local link_dir="/usr/local/bin"
+  if [ ! -L "$link_dir/otto" ] || [ "$(readlink "$link_dir/otto")" != "$OTTO_DIR/otto" ]; then
+    if [ -w "$link_dir" ] || [ -w "$(dirname "$link_dir")" ]; then
+      ln -sf "$OTTO_DIR/otto" "$link_dir/otto"
+      ok "Added 'otto' to your PATH ($link_dir/otto)"
+    elif sudo ln -sf "$OTTO_DIR/otto" "$link_dir/otto" 2>/dev/null; then
+      ok "Added 'otto' to your PATH ($link_dir/otto)"
+    else
+      warn "Run 'sudo ln -sf $OTTO_DIR/otto $link_dir/otto' to add otto to your PATH"
+    fi
+  fi
+
+  # Sync .env with updated template (preserves user values, refreshes defaults)
+  if [ -f "$ENV_FILE" ] && [ -f "$OTTO_DIR/.env.example" ]; then
+    info "Syncing settings with updated template..."
+    cmd_sync_settings
+  fi
+
+  # Pull latest Docker images and restart
+  info "Pulling latest images..."
+  docker compose -f "$COMPOSE_RUN" pull
+  docker compose -f "$COMPOSE_RUN" up -d --force-recreate
+  ok "Otto updated."
+}
+
+cmd_backup() {
+  "$OTTO_DIR/scripts/backup.sh"
+}
+
+cmd_restore() {
+  local file="${1:-}"
+  if [ -z "$file" ]; then
+    err "Usage: ./otto restore <backup-directory>"
+    err "Example: ./otto restore backups/2026-02-16_12-00-00"
+    exit 1
+  fi
+  "$OTTO_DIR/scripts/restore.sh" "$file"
+}
+
+cmd_help() {
+  echo "Otto CLI"
+  echo ""
+  echo "Usage: ./otto <command>"
+  echo ""
+  echo "Commands:"
+  echo "  start            Start Otto (pre-built containers)"
+  echo "  stop             Stop all services"
+  echo "  restart          Restart all services"
+  echo "  update           Pull latest images and restart"
+  echo "  status           Show service status and health"
+  echo "  logs [service]   Tail logs (optionally for a specific service)"
+  echo "  configure        Set up or reconfigure Otto (API keys, integrations)"
+  echo "  sync-settings    Refresh .env from latest template (keeps your values)"
+  echo "  backup           Create a backup"
+  echo "  restore <dir>    Restore from a backup directory"
+  echo "  dev              Start development environment (hot reload)"
+  echo "  help             Show this help message"
+  echo ""
+  echo "Quick start:"
+  echo "  ./otto start     Start Otto (runs setup wizard on first launch)"
+  echo "  ./otto configure Change API keys or add integrations"
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+command="${1:-help}"
+shift || true
+
+case "$command" in
+  dev)        cmd_dev ;;
+  start)      cmd_start ;;
+  stop)       cmd_stop ;;
+  restart)    cmd_restart ;;
+  update)     cmd_update ;;
+  status)     cmd_status ;;
+  logs)       cmd_logs "$@" ;;
+  configure)      cmd_configure ;;
+  sync-settings)  cmd_sync_settings ;;
+  backup)         cmd_backup ;;
+  restore)    cmd_restore "$@" ;;
+  help|--help|-h)  cmd_help ;;
+  *)
+    err "Unknown command: $command"
+    echo ""
+    cmd_help
+    exit 1
+    ;;
+esac

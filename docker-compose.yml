@@ -1,0 +1,153 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis/redis-stack:latest
+    # No ports mapping - not exposed to host. Services reach Redis via Docker networking.
+    environment:
+      - REDIS_ARGS=${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
+    volumes:
+      - ./data/redis:/data
+    restart: unless-stopped
+
+  backend:
+    image: ghcr.io/agent-otto/otto-backend:latest
+    container_name: otto-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/sqlite:/app/data
+      - ./data/sandbox:/app/sandbox
+      - ./.otto/skills:/app/.otto/skills
+      - ./data/team_memory:/data/team_memory
+      - ./data/uploads:/data/uploads
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_URL=sqlite:///data/otto.db
+      - OTTO_MEMORY_DB_PATH=/data/team_memory/otto_memory.db
+      - REDIS_URL=redis://${REDIS_PASSWORD:+:${REDIS_PASSWORD}@}redis:6379
+      - PYTHONPATH=/app
+      - DEPLOYMENT_TYPE=onprem_frontend
+      - FRONTEND_URL=${FRONTEND_URL}
+      - BACKEND_API_URL=${BACKEND_API_URL}
+      # Ollama for LLM
+      - USE_OLLAMA=${USE_OLLAMA:-false}
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-gpt-oss:latest}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5-mini}
+      # Google Gemini
+      - USE_GEMINI=${USE_GEMINI:-false}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3-pro-preview}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - MCP_SERVERS=/app/mcp-config.json
+      - LOCAL_STORAGE_PATH=${LOCAL_STORAGE_PATH:-/app/sandbox}
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - IMAP_HOST=${IMAP_HOST}
+      - IMAP_PORT=${IMAP_PORT:-993}
+      - IMAP_CHECK=${IMAP_CHECK:-30}
+      - SPECIALIZATION=${SPECIALIZATION}
+      - ADDITIONAL_INSTRUCTIONS=${ADDITIONAL_INSTRUCTIONS}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+      - SLACK_MCP_XOXC_TOKEN=${SLACK_MCP_XOXC_TOKEN}
+      - SLACK_MCP_XOXD_TOKEN=${SLACK_MCP_XOXD_TOKEN}
+      - SLACK_MCP_XOXB_TOKEN=${SLACK_MCP_XOXB_TOKEN}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
+      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - DEMO_MODE=${DEMO_MODE}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  arq-worker:
+    image: ghcr.io/agent-otto/otto-backend:${BACKEND_IMAGE_TAG:-latest}
+    container_name: otto-arq-worker
+    command: python -m arq app.arq_worker.WorkerSettings
+    volumes:
+      - ./data/sqlite:/app/data
+      - ./data/sandbox:/app/sandbox
+      - ./.otto/skills:/app/.otto/skills
+      - ./data/team_memory:/data/team_memory
+      - ./data/uploads:/data/uploads
+      - ./logs:/app/logs
+    environment:
+      - DATABASE_URL=sqlite:///data/otto.db
+      - OTTO_MEMORY_DB_PATH=/data/team_memory/otto_memory.db
+      - REDIS_URL=redis://${REDIS_PASSWORD:+:${REDIS_PASSWORD}@}redis:6379
+      - PYTHONPATH=/app
+      # Ollama for LLM
+      - USE_OLLAMA=${USE_OLLAMA:-false}
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-gpt-oss:latest}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5-mini}
+      # Google Gemini
+      - USE_GEMINI=${USE_GEMINI:-false}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3-pro-preview}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - MCP_SERVERS=/app/mcp-config.json
+      - LOCAL_STORAGE_PATH=${LOCAL_STORAGE_PATH:-/app/sandbox}
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
+      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      # Slack configuration (CRITICAL for thread replies)
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+      - SLACK_MCP_XOXC_TOKEN=${SLACK_MCP_XOXC_TOKEN}
+      - SLACK_MCP_XOXD_TOKEN=${SLACK_MCP_XOXD_TOKEN}
+      - SLACK_MCP_XOXB_TOKEN=${SLACK_MCP_XOXB_TOKEN}
+      - DEMO_MODE=${DEMO_MODE}
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/agent-otto/otto-frontend:${FRONTEND_IMAGE_TAG:-latest}
+    container_name: otto-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_DEPLOYMENT_TYPE=onprem
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: otto-tunnel
+    profiles:
+      - tunnel
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel --protocol http2 run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+volumes:
+  logs:
