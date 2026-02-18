@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Resolve symlinks so /usr/local/bin/otto → ~/otto/otto gives us ~/otto
+# Resolve the real location of this script, following symlinks.
+# Handles: "otto" via PATH, "/usr/local/bin/otto" symlink, relative targets.
 SCRIPT_PATH="$0"
-if [ -L "$SCRIPT_PATH" ]; then
-  SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+if [[ "$SCRIPT_PATH" != */* ]]; then
+  SCRIPT_PATH="$(command -v "$SCRIPT_PATH")"
 fi
+while [ -L "$SCRIPT_PATH" ]; do
+  LINK_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+  [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$LINK_DIR/$SCRIPT_PATH"
+done
 OTTO_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 COMPOSE_DEV="$OTTO_DIR/docker-compose.dev.yml"
 COMPOSE_RUN="$OTTO_DIR/docker-compose.yml"
