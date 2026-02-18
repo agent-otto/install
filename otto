@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OTTO_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Resolve symlinks so /usr/local/bin/otto → ~/otto/otto gives us ~/otto
+SCRIPT_PATH="$0"
+if [ -L "$SCRIPT_PATH" ]; then
+  SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+fi
+OTTO_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 COMPOSE_DEV="$OTTO_DIR/docker-compose.dev.yml"
 COMPOSE_RUN="$OTTO_DIR/docker-compose.yml"
 ENV_FILE="$OTTO_DIR/.env"
