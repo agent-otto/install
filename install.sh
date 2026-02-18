@@ -48,15 +48,22 @@ if [ -d "$INSTALL_DIR" ]; then
 fi
 
 info "Installing Otto to ${BOLD}$INSTALL_DIR${NC} ..."
-mkdir -p "$INSTALL_DIR/scripts"
+mkdir -p "$INSTALL_DIR/scripts" "$INSTALL_DIR/.otto/skills/metaskill/skill-creation"
 
-FILES="otto docker-compose.yml .env.example scripts/backup.sh scripts/restore.sh"
+# Core files
+FILES="otto docker-compose.yml .env.example mcp-config.json scripts/backup.sh scripts/restore.sh"
 for file in $FILES; do
   if ! curl -fsSL "$BASE/$file" -o "$INSTALL_DIR/$file"; then
     err "Failed to download $file"
     rm -rf "$INSTALL_DIR"
     exit 1
   fi
+done
+
+# Default skills
+SKILLS=".otto/skills/metaskill/skill-creation/SKILL.md"
+for file in $SKILLS; do
+  curl -fsSL "$BASE/$file" -o "$INSTALL_DIR/$file" 2>/dev/null || true
 done
 
 chmod +x "$INSTALL_DIR/otto" "$INSTALL_DIR/scripts/backup.sh" "$INSTALL_DIR/scripts/restore.sh"
@@ -85,8 +92,9 @@ echo ""
 echo -e "    cd $INSTALL_DIR"
 echo -e "    ./otto start"
 echo ""
-echo -e "  This will run the setup wizard on first launch."
-echo -e "  You'll need an API key for one of: Google Gemini, OpenAI, or Ollama."
+echo -e "  The setup wizard will ask for:"
+echo -e "    - An LLM API key (Google Gemini, OpenAI, or Ollama)"
+echo -e "    - A Tavily API key for web search (free at https://tavily.com)"
 echo ""
 echo -e "  ${BOLD}Other commands:${NC}  ./otto help"
 echo ""

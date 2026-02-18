@@ -24,6 +24,7 @@ The setup wizard runs on first launch and walks you through configuration.
   - Google Gemini (recommended) — get a key at [aistudio.google.com](https://aistudio.google.com/)
   - OpenAI
   - Ollama (local, no key needed)
+- **Tavily API key** (recommended, for web search) — free at [tavily.com](https://tavily.com) (1,000 searches/month)
 
 ## Commands
 

@@ -318,7 +318,23 @@ cmd_configure() {
   esac
 
   # ------------------------------------------------------------------
-  # 2. Otto Personality (optional)
+  # 2. Web Search (Tavily)
+  # ------------------------------------------------------------------
+  section "Web Search — Tavily (recommended)"
+  echo -e "  ${DIM}Tavily gives Otto the ability to search the web.${NC}"
+  echo -e "  ${DIM}Get a free API key at https://tavily.com (1,000 searches/month free).${NC}"
+  echo ""
+
+  if ask_yn "Set up web search?" "$([ -n "$(env_get TAVILY_API_KEY)" ] && echo y || echo n)"; then
+    ask_secret "Tavily API key (tvly-...)" "$(env_get TAVILY_API_KEY)"
+    env_set TAVILY_API_KEY "$REPLY"
+    ok "Web search enabled"
+  else
+    echo -e "  ${DIM}Skipped. Otto won't be able to search the web.${NC}"
+  fi
+
+  # ------------------------------------------------------------------
+  # Otto Personality (optional)
   # ------------------------------------------------------------------
   section "Otto Personality (optional)"
   echo -e "  ${DIM}Give Otto a specialization so it focuses on what matters to you.${NC}"
@@ -329,7 +345,7 @@ cmd_configure() {
   [ -n "$REPLY" ] && env_set SPECIALIZATION "$REPLY"
 
   # ------------------------------------------------------------------
-  # 3. Slack Integration (optional)
+  # Slack Integration (optional)
   # ------------------------------------------------------------------
   section "Slack Integration (optional)"
   echo -e "  ${DIM}Connect Otto to Slack so it can read and send messages.${NC}"
@@ -370,7 +386,7 @@ cmd_configure() {
   fi
 
   # ------------------------------------------------------------------
-  # 4. Email Integration (optional)
+  # Email Integration (optional)
   # ------------------------------------------------------------------
   section "Email Integration (optional)"
   echo -e "  ${DIM}Let Otto send and receive emails on your behalf.${NC}"
@@ -409,7 +425,7 @@ cmd_configure() {
   fi
 
   # ------------------------------------------------------------------
-  # 5. Redis Password (optional)
+  # Redis Password (optional)
   # ------------------------------------------------------------------
   section "Redis Password (optional)"
   echo -e "  ${DIM}Set a password for the Redis instance. Recommended for production,${NC}"
@@ -435,7 +451,7 @@ cmd_configure() {
   fi
 
   # ------------------------------------------------------------------
-  # 6. LangSmith Tracing (optional)
+  # LangSmith Tracing (optional)
   # ------------------------------------------------------------------
   section "LangSmith Tracing (optional)"
   echo -e "  ${DIM}LangSmith lets you trace and debug Otto's LLM calls.${NC}"
@@ -628,7 +644,7 @@ cmd_update() {
   fi
 
   info "Downloading latest files..."
-  for file in otto docker-compose.yml .env.example scripts/backup.sh scripts/restore.sh; do
+  for file in otto docker-compose.yml .env.example mcp-config.json scripts/backup.sh scripts/restore.sh; do
     if curl -fsSL "${auth[@]}" "$base/$file" -o "$OTTO_DIR/$file.tmp" 2>/dev/null; then
       mv "$OTTO_DIR/$file.tmp" "$OTTO_DIR/$file"
     else
@@ -637,6 +653,11 @@ cmd_update() {
     fi
   done
   chmod +x "$OTTO_DIR/otto" "$OTTO_DIR/scripts/backup.sh" "$OTTO_DIR/scripts/restore.sh" 2>/dev/null || true
+
+  # Update default skills (won't overwrite user-modified skills)
+  local skills_dir="$OTTO_DIR/.otto/skills/metaskill/skill-creation"
+  mkdir -p "$skills_dir"
+  curl -fsSL "$base/.otto/skills/metaskill/skill-creation/SKILL.md" -o "$skills_dir/SKILL.md" 2>/dev/null || true
 
   # Ensure otto is on PATH via /usr/local/bin symlink
   local link_dir="/usr/local/bin"

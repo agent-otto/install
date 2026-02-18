@@ -41,6 +41,7 @@ services:
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3-pro-preview}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - MCP_SERVERS=/app/mcp-config.json
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
       - LOCAL_STORAGE_PATH=${LOCAL_STORAGE_PATH:-/app/sandbox}
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
       - SMTP_HOST=${SMTP_HOST}
@@ -103,6 +104,7 @@ services:
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3-pro-preview}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - MCP_SERVERS=/app/mcp-config.json
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
       - LOCAL_STORAGE_PATH=${LOCAL_STORAGE_PATH:-/app/sandbox}
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
       - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
