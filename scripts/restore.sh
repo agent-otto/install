@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+# Resolve project root (scripts/ is one level below)
+OTTO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$OTTO_DIR"
+
+COMPOSE_RUN="$OTTO_DIR/docker-compose.yml"
+COMPOSE_DEV="$OTTO_DIR/docker-compose.dev.yml"
+
 if [ -z "$1" ]; then
   echo "Usage: $0 <path-to-backup-directory>"
   exit 1
@@ -17,8 +24,8 @@ echo "Restoring from $BACKUP_DIR..."
 
 # Stop services
 echo "Stopping services..."
-docker compose -f docker-compose.prod.yml down 2>/dev/null || true
-docker compose -f docker-compose.dev.yml down 2>/dev/null || true
+docker compose -f "$COMPOSE_RUN" down 2>/dev/null || true
+docker compose -f "$COMPOSE_DEV" down 2>/dev/null || true
 
 # Restore SQLite data
 if [ -f "$BACKUP_DIR/sqlite_data.tar.gz" ]; then
@@ -47,4 +54,4 @@ if [ -f "$BACKUP_DIR/redis_dump.rdb" ]; then
   echo "  Redis dump copied to data/redis/"
 fi
 
-echo "Restore complete. Run 'make dev' or 'make start' to start Otto."
+echo "Restore complete. Run './otto start' to start Otto."

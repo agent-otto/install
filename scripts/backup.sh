@@ -1,12 +1,19 @@
 #!/bin/bash
 set -e
 
+# Resolve project root (scripts/ is one level below)
+OTTO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$OTTO_DIR"
+
+COMPOSE_RUN="$OTTO_DIR/docker-compose.yml"
+COMPOSE_DEV="$OTTO_DIR/docker-compose.dev.yml"
+
 # Determine which compose file is active
-if docker compose -f docker-compose.prod.yml ps --quiet redis 2>/dev/null | grep -q .; then
-  COMPOSE="docker compose -f docker-compose.prod.yml"
+if docker compose -f "$COMPOSE_RUN" ps --quiet redis 2>/dev/null | grep -q .; then
+  COMPOSE="docker compose -f $COMPOSE_RUN"
   REDIS_SERVICE="redis"
-elif docker compose -f docker-compose.dev.yml ps --quiet redis 2>/dev/null | grep -q .; then
-  COMPOSE="docker compose -f docker-compose.dev.yml"
+elif docker compose -f "$COMPOSE_DEV" ps --quiet redis 2>/dev/null | grep -q .; then
+  COMPOSE="docker compose -f $COMPOSE_DEV"
   REDIS_SERVICE="redis"
 else
   echo "Error: No running Otto containers found. Start Otto first."
