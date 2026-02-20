@@ -746,7 +746,7 @@ case "$command" in
     # Derive version from running backend image tag, then fall back to git
     _img=$(docker inspect --format '{{.Config.Image}}' "$(docker ps -q -f name=otto-backend 2>/dev/null)" 2>/dev/null)
     _ver=""; [[ "$_img" == *:* ]] && _ver="${_img##*:}"
-    [ -z "$_ver" ] || [ "$_ver" = "latest" ] && _ver=$(git -C "$OTTO_DIR" describe --tags 2>/dev/null)
+    [ -z "$_ver" ] || [ "$_ver" = "latest" ] && _ver=$(git -C "$OTTO_DIR" describe --tags 2>/dev/null || true)
     echo "Otto ${_ver:-unknown}"
     ;;
   help|--help|-h)  cmd_help ;;
