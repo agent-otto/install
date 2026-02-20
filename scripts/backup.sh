@@ -29,10 +29,6 @@ echo "Starting backup to $BACKUP_DIR..."
 # Backup SQLite data
 echo "Backing up SQLite data..."
 tar -czf "$BACKUP_DIR/sqlite_data.tar.gz" data/sqlite 2>/dev/null || true
-if [ -f "backend/otto.db" ]; then
-  cp backend/otto.db "$BACKUP_DIR/"
-  echo "  Copied backend/otto.db"
-fi
 
 # Backup Redis
 echo "Backing up Redis..."

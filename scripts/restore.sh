@@ -34,12 +34,6 @@ if [ -f "$BACKUP_DIR/sqlite_data.tar.gz" ]; then
   echo "  SQLite data restored"
 fi
 
-if [ -f "$BACKUP_DIR/otto.db" ]; then
-  echo "Restoring backend database..."
-  cp "$BACKUP_DIR/otto.db" backend/otto.db
-  echo "  backend/otto.db restored"
-fi
-
 # Restore .env
 if [ -f "$BACKUP_DIR/.env" ]; then
   echo "Restoring environment configuration..."
@@ -54,4 +48,4 @@ if [ -f "$BACKUP_DIR/redis_dump.rdb" ]; then
   echo "  Redis dump copied to data/redis/"
 fi
 
-echo "Restore complete. Run './otto start' to start Otto."
+echo "Restore complete. Run 'make dev' or 'make start' to start Otto."

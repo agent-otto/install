@@ -48,10 +48,12 @@ if [ -d "$INSTALL_DIR" ]; then
 fi
 
 info "Installing Otto to ${BOLD}$INSTALL_DIR${NC} ..."
-mkdir -p "$INSTALL_DIR/scripts" "$INSTALL_DIR/skills/metaskill/skill-creation"
+mkdir -p "$INSTALL_DIR/scripts" \
+         "$INSTALL_DIR/data/mcp" \
+         "$INSTALL_DIR/skills/metaskill/skill-creation"
 
 # Core files
-FILES="otto docker-compose.yml .env.example mcp-config.json scripts/backup.sh scripts/restore.sh"
+FILES="otto docker-compose.yml .env.example data/mcp/mcp-config.json scripts/backup.sh scripts/restore.sh"
 for file in $FILES; do
   if ! curl -fsSL "$BASE/$file" -o "$INSTALL_DIR/$file"; then
     err "Failed to download $file"
