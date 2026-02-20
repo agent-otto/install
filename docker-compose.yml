@@ -30,6 +30,7 @@ services:
       - REDIS_URL=redis://${REDIS_PASSWORD:+:${REDIS_PASSWORD}@}redis:6379
       - PYTHONPATH=/app
       - DEPLOYMENT_TYPE=onprem_frontend
+      - USE_CONFIG=${USE_CONFIG:-false}
       - FRONTEND_URL=${FRONTEND_URL}
       - BACKEND_API_URL=${BACKEND_API_URL}
       # Ollama for LLM

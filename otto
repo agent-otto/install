@@ -570,8 +570,18 @@ cmd_dev() {
   echo ""
 
   # Stream backend logs in background, run frontend in foreground.
-  # On exit, stop everything.
-  trap 'echo ""; info "Shutting down..."; kill $LOGS_PID 2>/dev/null; docker compose -f "$COMPOSE_DEV" down; ok "Stopped."' EXIT INT TERM
+  # On exit (including Ctrl-C), stop everything.
+  cleanup() {
+    set +e
+    echo ""
+    info "Shutting down..."
+    kill $LOGS_PID 2>/dev/null
+    wait $LOGS_PID 2>/dev/null
+    docker compose -f "$COMPOSE_DEV" down
+    ok "Stopped."
+  }
+  trap cleanup EXIT
+
   # Stream backend logs with color-coded prefixes
   (
     docker compose -f "$COMPOSE_DEV" logs -f --no-log-prefix otto-backend 2>&1 \
@@ -581,7 +591,7 @@ cmd_dev() {
     wait
   ) &
   LOGS_PID=$!
-  (cd "$OTTO_DIR/frontend" && npm run dev)
+  (cd "$OTTO_DIR/frontend" && npm run dev) || true
 }
 
 cmd_start() {
