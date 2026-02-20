@@ -743,9 +743,16 @@ case "$command" in
   backup)         cmd_backup ;;
   restore)    cmd_restore "$@" ;;
   version|--version|-v)
-    # Derive version from running backend image tag, then fall back to git
-    _img=$(docker inspect --format '{{.Config.Image}}' "$(docker ps -q -f name=otto-backend 2>/dev/null)" 2>/dev/null)
-    _ver=""; [[ "$_img" == *:* ]] && _ver="${_img##*:}"
+    # Derive version: container label > image tag > git tag
+    _cid=$(docker ps -q -f name=otto-backend 2>/dev/null)
+    _ver=""
+    if [ -n "$_cid" ]; then
+      _ver=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$_cid" 2>/dev/null || true)
+      if [ -z "$_ver" ]; then
+        _img=$(docker inspect --format '{{.Config.Image}}' "$_cid" 2>/dev/null || true)
+        [[ "$_img" == *:* ]] && _ver="${_img##*:}"
+      fi
+    fi
     [ -z "$_ver" ] || [ "$_ver" = "latest" ] && _ver=$(git -C "$OTTO_DIR" describe --tags 2>/dev/null || true)
     echo "Otto ${_ver:-unknown}"
     ;;
