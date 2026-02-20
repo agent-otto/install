@@ -716,6 +716,7 @@ cmd_help() {
   echo "  backup           Create a backup"
   echo "  restore <dir>    Restore from a backup directory"
   echo "  dev              Start development environment (hot reload)"
+  echo "  version          Show Otto CLI version"
   echo "  help             Show this help message"
   echo ""
   echo "Quick start:"
@@ -741,6 +742,13 @@ case "$command" in
   sync-settings)  cmd_sync_settings ;;
   backup)         cmd_backup ;;
   restore)    cmd_restore "$@" ;;
+  version|--version|-v)
+    # Derive version from running backend image tag, then fall back to git
+    _img=$(docker inspect --format '{{.Config.Image}}' "$(docker ps -q -f name=otto-backend 2>/dev/null)" 2>/dev/null)
+    _ver=""; [[ "$_img" == *:* ]] && _ver="${_img##*:}"
+    [ -z "$_ver" ] || [ "$_ver" = "latest" ] && _ver=$(git -C "$OTTO_DIR" describe --tags 2>/dev/null)
+    echo "Otto ${_ver:-unknown}"
+    ;;
   help|--help|-h)  cmd_help ;;
   *)
     err "Unknown command: $command"
